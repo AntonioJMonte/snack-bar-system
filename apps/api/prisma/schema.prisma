@@ -1,0 +1,274 @@
+// Schema conforme seção 11 do PDF v3.1 e decisões #4 (inglês), #6 (centavos),
+// #9 (UUID v7), #13 (timestamptz/UTC).
+// Restrições que o Prisma não expressa e entram como SQL na migração inicial:
+//   - CHECK (discount_percent BETWEEN 0 AND 100) em Item e OrderItem
+//   - CHECK de quantidade positiva em OrderItem
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Cardápio ───────────────────────────
+
+model Category {
+  id           String  @id @default(uuid(7)) @db.Uuid
+  name         String
+  displayOrder Int
+  active       Boolean @default(true)
+  items        Item[]
+
+  @@map("categories")
+}
+
+model Item {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  name            String
+  description     String?
+  priceCents      Int      @map("price_cents")
+  discountPercent Int      @default(0) @map("discount_percent") // CHECK 0..100 na migração
+  photoUrl        String?  @map("photo_url")
+  soldOut         Boolean  @default(false) @map("sold_out")
+  active          Boolean  @default(true)
+  categoryId      String   @map("category_id") @db.Uuid
+  category        Category @relation(fields: [categoryId], references: [id])
+  addons          Addon[]
+
+  @@map("items")
+}
+
+model Addon {
+  id         String  @id @default(uuid(7)) @db.Uuid
+  name       String
+  priceCents Int     @map("price_cents")
+  itemId     String  @map("item_id") @db.Uuid
+  item       Item    @relation(fields: [itemId], references: [id])
+  active     Boolean @default(true)
+
+  @@map("addons")
+}
+
+// ─────────────────────────── Loja ───────────────────────────
+
+model DeliveryRegion {
+  id       String  @id @default(uuid(7)) @db.Uuid
+  name     String
+  feeCents Int     @map("fee_cents")
+  active   Boolean @default(true)
+  orders   Order[]
+
+  @@map("delivery_regions")
+}
+
+// Horário programado: regra recorrente (hora local da loja + dia da semana), não instante.
+model StoreSchedule {
+  id        String @id @default(uuid(7)) @db.Uuid
+  dayOfWeek Int    @map("day_of_week") // 0=domingo … 6=sábado
+  opensAt   String @map("opens_at") // "HH:mm", hora local da loja
+  closesAt  String @map("closes_at") // "HH:mm"
+
+  @@unique([dayOfWeek, opensAt])
+  @@map("store_schedules")
+}
+
+// Sobreposição manual (seção 5.5): vence o horário programado; expira ao final do dia.
+model StoreStatusOverride {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  open      Boolean
+  setById   String   @map("set_by_id") @db.Uuid
+  setBy     User     @relation(fields: [setById], references: [id])
+  setAt     DateTime @default(now()) @map("set_at") @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@map("store_status_overrides")
+}
+
+// ─────────────────────────── Pedido ───────────────────────────
+
+enum Channel {
+  web
+  whatsapp
+}
+
+enum OrderStatus {
+  pending_payment // criado, aguardando confirmação do gateway
+  awaiting_acceptance // pago; alerta ativo até o aceite (PDF: aguardando_aceite)
+  accepted // PDF: aceito
+  preparing // PDF: em_preparo
+  ready // PDF: pronto
+  out_for_delivery // PDF: a_caminho
+  completed // PDF: concluido
+}
+
+enum DeliveryType {
+  pickup
+  delivery
+}
+
+model Order {
+  id     String      @id @default(uuid(7)) @db.Uuid
+  number Int         @unique @default(autoincrement()) // visível ao cliente
+  channel Channel
+  status  OrderStatus @default(pending_payment)
+
+  customerName  String @map("customer_name")
+  customerPhone String @map("customer_phone") // obrigatório em todos os canais/entregas
+
+  deliveryType DeliveryType    @map("delivery_type")
+  address      String? // obrigatório apenas na entrega (validação no servidor)
+  regionId     String?         @map("region_id") @db.Uuid
+  region       DeliveryRegion? @relation(fields: [regionId], references: [id])
+
+  // Valores congelados na criação (seção 5.4) — nunca recalculados.
+  subtotalFullCents  Int @map("subtotal_full_cents")
+  discountTotalCents Int @map("discount_total_cents")
+  subtotalNetCents   Int @map("subtotal_net_cents")
+  deliveryFeeCents   Int @map("delivery_fee_cents")
+  totalCents         Int @map("total_cents")
+
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  acceptedAt   DateTime? @map("accepted_at") @db.Timestamptz(3)
+  acceptedById String?   @map("accepted_by_id") @db.Uuid
+  acceptedBy   User?     @relation(fields: [acceptedById], references: [id])
+
+  // Preparação Fase 2, custo zero (seção 11): nenhuma lógica usa na Fase 1.
+  printedAt  DateTime? @map("printed_at") @db.Timestamptz(3)
+  printCount Int?      @map("print_count")
+
+  items   OrderItem[]
+  payment Payment?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id      String @id @default(uuid(7)) @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  order   Order  @relation(fields: [orderId], references: [id])
+  itemId  String @map("item_id") @db.Uuid
+  itemName String @map("item_name") // nome no momento da compra — congelado
+
+  quantity Int // CHECK > 0 na migração
+
+  // Os três valores da seção 5.4, unitários, congelados na compra:
+  unitFullPriceCents      Int @map("unit_full_price_cents") // valor cheio (item + adicionais)
+  discountPercentApplied  Int @map("discount_percent_applied") // CHECK 0..100 na migração
+  unitDiscountCents       Int @map("unit_discount_cents") // valor do desconto
+  unitNetPriceCents       Int @map("unit_net_price_cents") // valor líquido
+
+  note   String?
+  addons OrderItemAddon[]
+
+  @@map("order_items")
+}
+
+// Adicionais do item do pedido, também congelados (nome e preço da compra).
+model OrderItemAddon {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  orderItemId String    @map("order_item_id") @db.Uuid
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id])
+  addonId     String?   @map("addon_id") @db.Uuid
+  name        String // congelado
+  priceCents  Int       @map("price_cents") // congelado
+
+  @@map("order_item_addons")
+}
+
+// ─────────────────────────── Pagamento ───────────────────────────
+
+enum PaymentMethod {
+  pix
+  credit_card
+  debit_card
+}
+
+enum PaymentStatus {
+  pending // PDF: pendente
+  paid // PDF: pago
+  declined // PDF: recusado
+  refunded // PDF: estornado
+}
+
+model Payment {
+  id      String        @id @default(uuid(7)) @db.Uuid
+  orderId String        @unique @map("order_id") @db.Uuid // um pagamento por pedido
+  order   Order         @relation(fields: [orderId], references: [id])
+  method  PaymentMethod
+  status  PaymentStatus @default(pending)
+
+  // Idempotência (seção 9.1): unicidade garantida pelo BANCO. Nulo até o gateway
+  // atribuir; UNIQUE do Postgres permite múltiplos NULLs.
+  gatewayTransactionId String? @unique @map("gateway_transaction_id")
+
+  amountCents Int      @map("amount_cents")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("payments")
+}
+
+// ─────────────────────────── Usuários e auditoria ───────────────────────────
+
+enum Role {
+  attendant // PDF: atendente
+  manager // PDF: gerente
+  admin // PDF: administrador
+}
+
+model User {
+  id           String  @id @default(uuid(7)) @db.Uuid
+  name         String
+  email        String  @unique
+  passwordHash String  @map("password_hash")
+  role         Role
+  active       Boolean @default(true)
+
+  acceptedOrders Order[]
+  overrides      StoreStatusOverride[]
+  auditLogs      AuditLog[]
+  panelSessions  PanelSession[]
+
+  @@map("users")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  action    String // ex.: "item.price_changed", "store.manually_closed"
+  entity    String // ex.: "Item", "StoreStatusOverride"
+  entityId  String   @map("entity_id")
+  oldValue  Json?    @map("old_value")
+  newValue  Json?    @map("new_value")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("audit_logs")
+}
+
+// ─────────────────────────── Painel e WhatsApp ───────────────────────────
+
+model PanelSession {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  user            User     @relation(fields: [userId], references: [id])
+  device          String // ex.: "pc-balcao", "celular-loja"
+  soundArmed      Boolean  @default(false) @map("sound_armed")
+  lastHeartbeatAt DateTime @map("last_heartbeat_at") @db.Timestamptz(3)
+
+  @@map("panel_sessions")
+}
+
+// Modelada agora (Etapa 3), implementação só na Fase 1B.
+model WhatsAppConversation {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  phone             String   @unique
+  flowState         String   @map("flow_state") // máquina de estados do fluxo
+  cart              Json?
+  lastInteractionAt DateTime @map("last_interaction_at") @db.Timestamptz(3)
+
+  @@map("whatsapp_conversations")
+}

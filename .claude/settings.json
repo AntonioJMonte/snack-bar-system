@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "echo '=== ESTADO.md (injetado pelo hook SessionStart - leitura obrigatoria) ==='; cat ESTADO.md 2>/dev/null || echo 'AVISO: ESTADO.md nao encontrado na raiz do projeto'",
+            "statusMessage": "Carregando ESTADO.md..."
+          }
+        ]
+      }
+    ]
+  }
+}

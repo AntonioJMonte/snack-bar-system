@@ -1,0 +1,17 @@
+{
+  "name": "lanchonete",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sistema de pedidos para lanchonete — spec v3.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "api": "npm run --workspace apps/api",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
