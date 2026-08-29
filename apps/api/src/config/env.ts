@@ -6,6 +6,10 @@ const envSchema = z.object({
   DATABASE_URL: z
     .string()
     .regex(/^postgres(ql)?:\/\/.+/, 'deve ser uma URL postgresql://'),
+  JWT_SECRET: z.string().min(16, 'mínimo de 16 caracteres'),
+  JWT_TTL: z.string().default('12h'),
+  MP_ACCESS_TOKEN: z.string().min(1),
+  MP_WEBHOOK_SECRET: z.string().min(1),
   STORE_TIMEZONE: z.string().refine(
     (tz) => {
       try {

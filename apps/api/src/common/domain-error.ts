@@ -8,7 +8,10 @@ export type DomainErrorCode =
   | 'ADDON_INACTIVE'
   | 'REGION_NOT_FOUND'
   | 'REGION_INACTIVE'
-  | 'STORE_CLOSED';
+  | 'STORE_CLOSED'
+  | 'ORDER_NOT_FOUND'
+  | 'ORDER_NOT_PAYABLE'
+  | 'INVALID_STATUS_TRANSITION';
 
 export class DomainError extends Error {
   constructor(

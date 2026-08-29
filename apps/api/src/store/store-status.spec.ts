@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { storeLocalParts } from './store-clock';
+import { endOfStoreDay, storeLocalParts } from './store-clock';
 import { resolveStoreStatus, type ScheduleData } from './store-status';
 
 const schedules: ScheduleData[] = [
@@ -52,5 +52,27 @@ describe('storeLocalParts — conversão UTC → fuso da loja (decisão #13)', (
       dayOfWeek: 6,
       time: '09:00',
     });
+  });
+});
+
+describe('endOfStoreDay — expiração da sobreposição manual (seção 5.5)', () => {
+  it('meio da tarde local: expira na meia-noite local seguinte (03:00 UTC)', () => {
+    // 12:00 UTC = 09:00 de sábado em SP → fim do dia = domingo 00:00 SP = 03:00 UTC
+    expect(endOfStoreDay(new Date('2026-08-29T12:00:00Z'), 'America/Sao_Paulo')).toEqual(
+      new Date('2026-08-30T03:00:00Z'),
+    );
+  });
+
+  it('tarde da noite local, já no dia UTC seguinte: expira na meia-noite da MESMA noite local', () => {
+    // 02:00 UTC de sábado = 23:00 de sexta em SP → fim do dia = sábado 00:00 SP = 03:00 UTC
+    expect(endOfStoreDay(new Date('2026-08-29T02:00:00Z'), 'America/Sao_Paulo')).toEqual(
+      new Date('2026-08-29T03:00:00Z'),
+    );
+  });
+
+  it('em UTC, o fim do dia é a próxima meia-noite exata', () => {
+    expect(endOfStoreDay(new Date('2026-08-29T12:34:56Z'), 'UTC')).toEqual(
+      new Date('2026-08-30T00:00:00Z'),
+    );
   });
 });

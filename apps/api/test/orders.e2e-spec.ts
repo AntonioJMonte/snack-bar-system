@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedCatalog, seedOpenAllDay, truncateAll } from './seed';
 
 // Objetivo (Etapa 4): provar o pipeline completo — app real, migração aplicada
 // em banco descartável, pedido criado via HTTP, estado persistido conferido.
@@ -26,41 +27,18 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await prisma.$executeRawUnsafe(
-    `TRUNCATE TABLE "order_item_addons","order_items","payments","orders","addons","items",` +
-      `"categories","delivery_regions","store_schedules","store_status_overrides",` +
-      `"audit_logs","panel_sessions","whatsapp_conversations","users" RESTART IDENTITY CASCADE`,
-  );
+  await truncateAll(prisma);
 });
 
-async function seedCatalog() {
-  const category = await prisma.category.create({
-    data: { name: 'Lanches', displayOrder: 1 },
-  });
-  const item = await prisma.item.create({
-    data: {
-      name: 'X-Burger',
-      priceCents: 1000,
-      discountPercent: 15,
-      categoryId: category.id,
-      addons: { create: [{ name: 'Bacon', priceCents: 200 }] },
-    },
-    include: { addons: true },
-  });
-  // Loja aberta o dia todo, todos os dias — o alvo do teste é o pedido, não o horário.
-  await prisma.storeSchedule.createMany({
-    data: Array.from({ length: 7 }, (_, day) => ({
-      dayOfWeek: day,
-      opensAt: '00:00',
-      closesAt: '23:59',
-    })),
-  });
-  return { item, addon: item.addons[0] };
+async function seedOpenCatalog() {
+  const seeded = await seedCatalog(prisma);
+  await seedOpenAllDay(prisma);
+  return seeded;
 }
 
 describe('POST /orders (e2e)', () => {
   it('cria pedido válido, congela os três valores e fecha a aritmética', async () => {
-    const { item, addon } = await seedCatalog();
+    const { item, addon } = await seedOpenCatalog();
 
     const response = await fetch(`${baseUrl}/orders`, {
       method: 'POST',
@@ -115,7 +93,7 @@ describe('POST /orders (e2e)', () => {
   });
 
   it('rejeita pedido sem telefone com erro claro e não cria nada', async () => {
-    const { item } = await seedCatalog();
+    const { item } = await seedOpenCatalog();
 
     const response = await fetch(`${baseUrl}/orders`, {
       method: 'POST',

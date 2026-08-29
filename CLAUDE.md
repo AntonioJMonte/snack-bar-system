@@ -68,6 +68,9 @@ diretamente. Tudo se comunica pelo backend e pelo evento `pedido.pago`, publicad
 ## Stack e versões (decisões #2–#13 em docs/decisoes/)
 - Monorepo npm workspaces: `apps/api` (NestJS 11), `apps/web` (Next.js, sessão futura),
   futuro `apps/agent` (Fase 2). Node 24 LTS, Prisma 6, PostgreSQL 17, Zod, Vitest.
+- Gateway: Mercado Pago (#15), SDK encapsulado em `payments/gateway.ts` — o resto do
+  código nunca vê tipos do SDK. Senhas: argon2id (#16). Auth: JWT + guards com
+  hierarquia attendant < manager < admin (#17).
 - Postgres local via Docker Compose: um container, bancos `lanchonete_dev` e
   `lanchonete_test`. Nada de Supabase/Railway em desenvolvimento.
 - e2e: banco de teste recriado por execução, TRUNCATE entre testes, API via HTTP.

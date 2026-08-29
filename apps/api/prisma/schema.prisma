@@ -259,6 +259,7 @@ model PanelSession {
   soundArmed      Boolean  @default(false) @map("sound_armed")
   lastHeartbeatAt DateTime @map("last_heartbeat_at") @db.Timestamptz(3)
 
+  @@unique([userId, device])
   @@map("panel_sessions")
 }
 

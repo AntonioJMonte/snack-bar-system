@@ -1,39 +1,38 @@
 # ESTADO DO PROJETO
 > Atualizado ao final de cada sessão. É a primeira leitura obrigatória de toda sessão.
 
-## Última sessão: 01 — 2026-08-29 (relatório: docs/relatorios/sessao-01.md)
+## Última sessão: 03 — 2026-08-29 (relatório: docs/relatorios/sessao-03.md)
 
-## Pronto e testado
-- Monorepo npm workspaces; `apps/api` (NestJS 11.2, Prisma 6.19, Zod 4.5, Vitest 4.1).
-- Docker Compose `postgres:17` com bancos `lanchonete_dev` e `lanchonete_test`.
-- Configuração de ambiente validada com Zod — app não sobe sem variável (comprovado).
-- Schema Prisma completo (seção 11 + DeliveryRegion + StoreSchedule), 2 migrações
-  aplicadas; CHECKs de desconto 0–100 e quantidade > 0 garantidos pelo banco.
-- `POST /orders` completo: validação (telefone BR/DDD, endereço só na entrega),
-  disponibilidade, loja aberta (manual > programado), cálculo no servidor com três
-  valores congelados por item (half-up por unidade, centavos inteiros), transação
-  única, log de rastreabilidade. Erros com códigos específicos.
-- 53 testes unitários + 2 e2e (HTTP + banco descartável) verdes; typecheck e build OK.
-
-## Em andamento
-- Nada pendurado: a sessão fechou com a fatia vertical completa.
+## Pronto e testado (115 testes: 70 unitários + 45 e2e, tudo verde)
+**O backend da Fase 1A está funcionalmente completo.** Sobre a base das sessões 01–02
+(pedido com valores congelados, pagamento MP com webhook idempotente + `order.paid`,
+auth JWT/argon2, operações de gerente auditadas), a sessão 03 entregou:
+- Painel de produção completo: lista ativa (só pagos), aceite explícito (quem/quando),
+  avanço de status por tipo de entrega (retirada pula `a_caminho` — decisão #19),
+  heartbeat por usuário+dispositivo, painéis ativos p/ gerente+.
+- Reconciliação agendada (60s, pendentes de 5+ min, `@nestjs/schedule` — decisão #18),
+  desligada em teste; e2e cobre o método.
+- Cadastro de cardápio + cardápio público `GET /menu`; horários (PUT semana) e regiões.
+- Usuários (admin: criar/editar/desativar, argon2id, e-mail único) e `GET /audit`.
+- Acompanhamento público `GET /orders/:id/tracking` (UUID não enumerável, sem vazar
+  dados operacionais).
 
 ## Decisões tomadas
-- #1–#14 em docs/decisoes/ (uma por arquivo, com a resposta do usuário). Destaques:
-  identificadores em INGLÊS com glossário (004), dinheiro em centavos inteiros (006),
-  half-up por unidade (007), UUID v7 (009), UTC + STORE_TIMEZONE (013),
-  status inicial `pending_payment` (014).
+- #1–#20 em docs/decisoes/. Sessão 03: scheduler (018), fluxo de status na retirada
+  (019), fechar backend antes do web (020).
 
 ## Pendências e bloqueios
-- Consentimento Prisma embutido no e2e (`test/global-setup.ts`) — validar com o usuário
-  se a abordagem está OK (ver risco 1 do relatório da sessão 01).
-- Gateway de pagamento ainda não decidido (Mercado Pago vs Stripe) — decisão da
-  sessão 02, via Regra de Ouro.
-- Expiração "fim do dia" da sobreposição manual: leitura pronta, escrita (cálculo do
-  expiresAt no fuso da loja) entra com o endpoint do gerente.
+- **Validar assinatura do webhook contra sandbox real do Mercado Pago** quando o
+  usuário criar as credenciais (risco nº 1 desde a sessão 02).
+- Intervalo/janela da reconciliação são constantes (60s / 5 min) — promover a config
+  se a operação pedir.
+- Painéis ativos visíveis a gerente+ (5.7 não fixa perfil) — confirmar com o usuário.
+- `npm audit`: 3 high no CLI do Prisma (dev-only) — risco aceito (sessão 02).
 
-## Próximo passo concreto (sessão 02)
-1. e2e dos caminhos de erro (esgotado, loja fechada, adicional inválido).
-2. DECISÃO: gateway de pagamento. Depois: intenção de pagamento + webhook idempotente
-   + conferência de valor + publicação única do evento `order.paid`.
-3. Endpoints de gerente com guards por perfil + auditoria + expiresAt no fuso da loja.
+## Próximo passo concreto (sessão 04)
+1. Iniciar `apps/web` (Next.js 10.2 do PDF: Tailwind+shadcn/ui, TanStack Query,
+   mobile-first): cardápio → carrinho → checkout (nome/telefone) → gateway →
+   acompanhamento. Apresentar decisões de frontend em blocos (Regra de Ouro) antes
+   de escolher libs/estrutura.
+2. Depois do site do cliente: painel de produção web (som armado por clique, repetição
+   até aceite, Wake Lock, PWA) e painel admin.

@@ -16,8 +16,12 @@
     "@nestjs/common": "^11.2.3",
     "@nestjs/core": "^11.2.3",
     "@nestjs/event-emitter": "^3.1.0",
+    "@nestjs/jwt": "^12.0.1",
     "@nestjs/platform-express": "^11.2.3",
+    "@nestjs/schedule": "^12.0.1",
     "@prisma/client": "^6.19.3",
+    "argon2": "^0.45.1",
+    "mercadopago": "^3.6.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "zod": "^4.5.4"
