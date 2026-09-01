@@ -10,6 +10,10 @@ const envSchema = z.object({
   JWT_TTL: z.string().default('12h'),
   MP_ACCESS_TOKEN: z.string().min(1),
   MP_WEBHOOK_SECRET: z.string().min(1),
+  // Origem do apps/web: usada no CORS e nas back_urls do gateway (retorno do
+  // navegador é só navegação — NUNCA prova de pagamento, seção 5.3).
+  // A API ocupa a 3001; o site roda na 3000.
+  WEB_ORIGIN: z.url().default('http://localhost:3000'),
   STORE_TIMEZONE: z.string().refine(
     (tz) => {
       try {
