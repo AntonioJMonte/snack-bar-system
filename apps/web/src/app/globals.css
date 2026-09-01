@@ -1,0 +1,26 @@
+@import 'tailwindcss';
+
+/* Tokens do sistema visual. Mantidos como variáveis CSS para que a adoção do
+   shadcn/ui (PDF 10.2) seja aditiva, sem reescrever componentes. */
+@theme {
+  --color-surface: #ffffff;
+  --color-surface-muted: #f5f5f4;
+  --color-border-subtle: #e7e5e4;
+  --color-ink: #1c1917;
+  --color-ink-muted: #57534e;
+  --color-brand: #c2410c;
+  --color-brand-strong: #9a3412;
+  --color-danger: #b91c1c;
+  --color-success: #15803d;
+}
+
+:root {
+  color-scheme: light;
+  background-color: var(--color-surface-muted);
+  color: var(--color-ink);
+}
+
+body {
+  /* Mobile-first: a maior parte dos pedidos vem do celular (PDF 10.2). */
+  -webkit-font-smoothing: antialiased;
+}
