@@ -10,9 +10,13 @@
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "seed:dev": "node --env-file=.env scripts/seed-dev.mjs",
+    "create:user": "node --env-file=.env scripts/create-user.mjs",
+    "simulate:payment": "node --env-file=.env scripts/simulate-payment.mjs"
   },
   "dependencies": {
+    "@lanchonete/contracts": "*",
     "@nestjs/common": "^11.2.3",
     "@nestjs/core": "^11.2.3",
     "@nestjs/event-emitter": "^3.1.0",

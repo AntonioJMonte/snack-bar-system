@@ -26,9 +26,11 @@ export interface CheckoutPreferenceInput {
 @Injectable()
 export class MercadoPagoClient {
   private readonly config: MercadoPagoConfig;
+  private readonly webOrigin: string;
 
   constructor(@Inject(ENV) env: Env) {
     this.config = new MercadoPagoConfig({ accessToken: env.MP_ACCESS_TOKEN });
+    this.webOrigin = env.WEB_ORIGIN;
   }
 
   async getPayment(id: string): Promise<GatewayPayment> {
@@ -74,6 +76,13 @@ export class MercadoPagoClient {
         // Apenas os métodos do PDF (10.3): Pix, crédito e débito.
         payment_methods: {
           excluded_payment_types: [{ id: 'ticket' }, { id: 'atm' }],
+        },
+        // Volta ao acompanhamento do pedido no site. Navegação apenas: a prova
+        // de pagamento é SEMPRE o webhook assinado (seção 5.3).
+        back_urls: {
+          success: `${this.webOrigin}/pedido/${input.orderId}`,
+          pending: `${this.webOrigin}/pedido/${input.orderId}`,
+          failure: `${this.webOrigin}/pedido/${input.orderId}`,
         },
       },
     });
