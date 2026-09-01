@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -13,6 +14,7 @@ import { JwtAuthGuard, type AuthenticatedRequest } from '../auth/jwt-auth.guard'
 import { MinRole } from '../auth/min-role.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { parseOr400 } from '../common/zod';
+import { PrismaService } from '../prisma/prisma.service';
 import { MenuService } from './menu.service';
 
 const priceSchema = z.object({ priceCents: z.number().int().positive() });
@@ -68,7 +70,27 @@ const updateAddonSchema = z
 @Controller('menu')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class MenuController {
-  constructor(private readonly menuService: MenuService) {}
+  constructor(
+    private readonly menuService: MenuService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  // Catálogo COMPLETO para gestão (seção 5.7): diferente de `GET /menu`, inclui
+  // categorias, itens e adicionais INATIVOS — sem isso não há como reativar o
+  // que foi desativado. Gerente+, como o restante do cadastro.
+  @Get('catalog')
+  @MinRole('manager')
+  catalog() {
+    return this.prisma.category.findMany({
+      orderBy: { displayOrder: 'asc' },
+      include: {
+        items: {
+          orderBy: { name: 'asc' },
+          include: { addons: { orderBy: { name: 'asc' } } },
+        },
+      },
+    });
+  }
 
   // ——— Cadastro (gerente+, seção 5.5) ———
 
