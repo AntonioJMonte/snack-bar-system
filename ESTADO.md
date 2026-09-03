@@ -1,15 +1,42 @@
 # ESTADO DO PROJETO
 > Atualizado ao final de cada sessão. É a primeira leitura obrigatória de toda sessão.
 
-## Última sessão: 05 — 2026-09-01 (relatórios: docs/relatorios/sessao-04.md e sessao-05.md)
+## Última sessão: 07 — 2026-09-02 (relatório: docs/relatorios/sessao-07.md)
 
-## Pronto e testado (164 testes: 70 unitários API + 55 e2e API + 39 unitários web)
+## Pronto e testado (195 testes: 73 unitários API + 71 e2e API + 51 unitários web/contrato)
 
 **A Fase 1A está funcionalmente completa em código.** Backend, site do cliente,
 painel de produção e painel administrativo existem e passam nos testes. O que falta
 para declarar a fase pronta é execução em ambiente real, não código — ver pendências.
 
-### Backend (`apps/api`, sessões 01–03, ajustes na 04–05)
+### Correções da sessão 07 — o que mudou no caminho do dinheiro
+Sessão de **fechamento mínimo** antes do sandbox: escopo restrito a perda de dinheiro,
+estabilidade e segurança básica (decisão #31). O que entrou:
+- **Uma linha de pagamento por transação** (#32). Antes o `upsert` sobrescrevia: cartão
+  recusado sumia do banco e um segundo pagamento aprovado não era gravado em lugar
+  nenhum. Agora tudo fica, e `/admin/pedidos` mostra "PAGO DUAS VEZES" quando há duas
+  aprovadas. Junto: o estorno (que chega no MESMO id) passou a ser registrado — antes
+  era engolido pelo curto-circuito de idempotência e **nenhum estorno existia no banco**.
+- **Idempotência do pedido e do checkout** (#33): cabeçalho `Idempotency-Key`, chave
+  gerada no navegador por checkout; clique repetido devolve o mesmo pedido com 200, e o
+  checkout reaproveita a preferência em vez de criar outra no gateway.
+- **Expiração do pedido não pago** (#34): status `expired` após 25 min (15 de QR + 10 de
+  tolerância). Sem isso, pedidos zumbis ocupariam os 50 slots da reconciliação e a rede
+  de segurança contra webhook perdido pararia de funcionar em silêncio. Pagamento tardio
+  ressuscita o pedido com faixa "PAGAMENTO FORA DO PRAZO" no painel.
+- **Rate limiting completo** (#35): webhook com balde próprio de 600/min (antes dividia
+  20/min com todo o resto e assinatura inválida já consumia cota), 60/min no pedido e
+  checkout, 120/min no painel, 10/min no login, `TRUST_PROXY_HOPS`, log de todo bloqueio
+  e throttler desligado em teste com e2e dedicado que o religa.
+- **Robustez do webhook** (#36): `lock_timeout` devolve 503 em vez de 200 (com 200 o
+  Mercado Pago NÃO reenvia — era erro meu da sessão 06), timeout de 8s no gateway,
+  janela de frescor de 5 min na assinatura e aviso quando o método de pagamento é
+  desconhecido.
+- **CI e estrutura de deploy**: `.github/workflows/ci.yml` (typecheck, unitários, e2e com
+  Postgres em service container, varredura de credencial versionada) e `deploy.yml`
+  apenas por `workflow_dispatch`, com o passo de publicação comentado.
+
+### Backend (`apps/api`, sessões 01–03, ajustes na 04–05, 07)
 Pedido com valores congelados, pagamento Mercado Pago com webhook idempotente e
 evento `order.paid`, auth JWT/argon2id, operações de gerente auditadas, painel via
 API, reconciliação agendada, cardápio, horários, regiões, usuários e auditoria.
@@ -70,6 +97,16 @@ configurações (horário semanal e regiões), usuários e auditoria (admin).
 - **Não há dados reais.** Cardápio, categorias, adicionais, horários, regiões e
   usuários da loja precisam ser cadastrados (próximos passos 4 a 6 do PDF).
 
+### Verificar com o Mercado Pago antes do deploy
+- **Limites de recebimento da Conta Negócio pessoa física.** Confirmar com o suporte
+  quais são os tetos de recebimento e se há retenção — o volume da loja não pode
+  esbarrar num limite descoberto depois de a operação começar.
+- **Prazo real do QR Pix.** O `createCheckout` não envia expiração ao gateway, então
+  vale o padrão do Mercado Pago. Os 15 minutos da decisão #34 são a regra do NOSSO lado;
+  se o padrão deles divergir, alinhar.
+- **Número de saltos de proxy do provedor**, para preencher `TRUST_PROXY_HOPS`. Com o
+  valor errado o rate limiting vira limite global e derruba a loja inteira.
+
 ### Decisões pendentes do usuário
 - **Perfil de três telas:** `GET /orders`, `GET /menu/catalog` e "painéis ativos"
   foram implementados como gerente+; o PDF 5.7 não fixa o perfil. Confirmar.
@@ -79,8 +116,19 @@ configurações (horário semanal e regiões), usuários e auditoria (admin).
   reinstalação e `attrib +P -U /S /D`, mas **vai reincidir**. A solução definitiva é
   mover o repositório para fora do OneDrive.
 
+### Cortado de propósito — não voltar como pendência (decisão #31)
+- **Isolar o gateway atrás de interface/porta:** avaliado e cortado. É higiene de
+  código, não previne perda de dinheiro; o SDK já está encapsulado em `gateway.ts`.
+- **`print_job` e qualquer infraestrutura de impressão:** Fase 2. `printedAt`/
+  `printCount` continuam nulos e sem lógica. **Não será reintroduzido.**
+- **Redis, BullMQ, WebSocket, fila em processo separado:** Fase 2. Consequência aceita:
+  os contadores do rate limiting vivem em memória e zeram no reinício.
+
 ### Menores
-- Intervalo/janela da reconciliação são constantes (60s / 5 min).
+- Intervalo/janela da reconciliação são constantes (60s / 5 min); a expiração usa
+  `ORDER_EXPIRY_MINUTES` (25) em `src/common/order-expiry.ts`.
+- Armazenamento do throttler em memória: reinício zera contadores; várias instâncias
+  multiplicariam o limite. Resolver exigiria Redis, que é Fase 2.
 - `npm audit`: 3 high no CLI do Prisma (dev-only) — risco aceito (sessão 02).
 - Ao recriar `node_modules`, rodar `npm run prisma:generate -w apps/api` antes de
   compilar a API — sem isso o build falha com "@prisma/client has no exported member".
@@ -92,10 +140,10 @@ Portas: **API 3001**, **site 3000**. Ferramentas de desenvolvimento em
 (primeiro acesso ao painel) e `simulate:payment` (marca um pedido como pago para
 exercitar o painel sem credenciais do gateway — não substitui o webhook real).
 
-## Próximo passo concreto (sessão 06)
-1. Confirmar as decisões pendentes acima (perfis das três telas).
-2. Criar as credenciais do Mercado Pago e validar o fluxo pagamento → webhook →
-   `order.paid` → alerta no painel contra o sandbox real.
+## Próximo passo concreto (sessão 08)
+1. **Testar contra o sandbox do Mercado Pago** — é o único item que ainda bloqueia
+   declarar a Fase 1A pronta. Checklist de prontidão no relatório da sessão 07.
+2. Confirmar as decisões pendentes acima (perfis das três telas).
 3. Cadastrar o cardápio real e os usuários da loja; executar o plano de testes da
    seção 14 nos aparelhos reais, com atenção às seções 14.2 e 14.3.
 4. Só então: publicação (Vercel + backend), HTTPS, monitoramento e backup.

@@ -17,14 +17,13 @@ npm run test --workspaces
   web + contracts   Test Files  5 passed (5)    Tests  51 passed (51)
 
 npm run test:e2e -w apps/api
-                    Test Files 10 passed (10)   Tests  70 passed (70)
-                    Duration 40.51s
+                    Test Files 10 passed (10)   Tests  71 passed (71)
 ```
 
-**Total: 194 testes.** Antes da sessão eram 164 (70 + 55 + 39).
+**Total: 195 testes.** Antes da sessão eram 164 (70 + 55 + 39).
 
 Arquivos e2e novos: `idempotency.e2e-spec.ts` (5) e `throttler.e2e-spec.ts` (3).
-`payments.e2e-spec.ts` cresceu de 10 para 16 casos.
+`payments.e2e-spec.ts` cresceu de 10 para 16 casos; `panel.e2e-spec.ts`, de 9 para 10.
 
 ---
 
@@ -266,7 +265,31 @@ muda a cada reinício do túnel — precisa ser reconfigurada no painel.
 
 ---
 
-## 9. Nada foi commitado
+## 9. Cobertura das duas correções no caminho do dinheiro
 
-`git status` mostra 36 arquivos modificados e 13 novos, todos no diretório de trabalho.
-Nenhum `git add`, `git commit` ou `git push` foi executado.
+Conferido a pedido do dono do projeto, depois da entrega inicial.
+
+| Correção | Onde está o teste |
+|---|---|
+| Estorno no mesmo id passa a ser registrado | `apps/api/test/payments.e2e-spec.ts` — *"estorno chega no MESMO id do pagamento e é registrado"*: aprova, estorna com o mesmo id, exige `status = refunded` e **uma** linha no pedido. |
+| Pagamento tardio grava `paidAfterExpiryAt` | `apps/api/test/payments.e2e-spec.ts` — *"pagamento que chega DEPOIS da expiração volta para aceite, marcado"*: expira, paga, exige `awaiting_acceptance`, `paidAfterExpiryAt` não nulo e **um** `order.paid`. |
+| A marca chega ao painel | **Lacuna encontrada e fechada nesta conferência.** `apps/api/test/panel.e2e-spec.ts` — *"pedido pago após expirar chega ao painel COM a marca; pedido normal vem sem ela"*. |
+
+A lacuna era real e silenciosa: `paidAfterExpiryAt` é **opcional** no contrato, então se a
+query do painel deixasse de trazê-lo o Zod não reclamaria — a faixa sumiria da tela sem
+nenhum sinal. Verificado que o teste não é vazio: com `omit: { paidAfterExpiryAt: true }`
+na query do painel ele falha (`expected undefined to be '...'`); revertido, passa.
+
+O que **continua sem teste** é a renderização da faixa no componente React
+(`order-card.tsx`). Não há infraestrutura de teste de componente no `apps/web` — só
+specs de funções puras. Cobrir exigiria instalar `@testing-library/react` + `jsdom`, o
+que precisa de aprovação.
+
+## 10. Commits
+
+Durante a sessão eu não executei nenhum `git add`, `commit` ou `push`. O dono do projeto
+commitou o trabalho por conta própria em 2026-09-02 21:04, em quatro commits
+(`4bf80af`, `d51c232`, `71a5ca3`, `0be2a33`). Seguiram fora deles, no diretório de
+trabalho: `ESTADO.md`, `package.json`, `package-lock.json`, `apps/api/package.json`,
+`apps/api/.env.example`, `apps/api/scripts/simulate-payment.mjs` e o
+`apps/api/test/panel.e2e-spec.ts` desta conferência.

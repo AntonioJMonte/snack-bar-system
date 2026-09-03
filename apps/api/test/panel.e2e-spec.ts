@@ -103,6 +103,49 @@ describe('painel de produção (e2e)', () => {
     expect(orders).toHaveLength(0); // só pedido PAGO alerta a loja (seção 6.1)
   });
 
+  // A faixa "PAGAMENTO FORA DO PRAZO" do cartão do painel depende deste campo
+  // chegar pela API. Como `paidAfterExpiryAt` é opcional no contrato, se a query
+  // do painel deixar de trazê-lo o schema NÃO reclama — a faixa some em silêncio
+  // e a loja volta a aceitar pedido velho sem saber (decisão #34).
+  it('pedido pago após expirar chega ao painel COM a marca; pedido normal vem sem ela', async () => {
+    const { item } = await seedCatalog(prisma);
+    await seedOpenAllDay(prisma);
+    const criar = async () => {
+      const response = await postOrder(baseUrl, {
+        customerName: 'Maria',
+        customerPhone: '11987654321',
+        deliveryType: 'pickup',
+        items: [{ itemId: item.id, quantity: 1 }],
+      });
+      const { id } = (await response.json()) as { id: string };
+      await prisma.order.update({ where: { id }, data: { status: 'awaiting_acceptance' } });
+      return id;
+    };
+
+    const normalId = await criar();
+    const tardioId = await criar();
+    const marcadoEm = new Date();
+    await prisma.order.update({
+      where: { id: tardioId },
+      data: { paidAfterExpiryAt: marcadoEm },
+    });
+
+    const attendant = await seedUser(prisma, 'attendant');
+    const token = await loginAs(baseUrl, attendant.email);
+
+    const orders = (await (await api('/panel/orders', token)).json()) as Array<{
+      id: string;
+      paidAfterExpiryAt: string | null;
+    }>;
+
+    const tardio = orders.find((o) => o.id === tardioId);
+    const normal = orders.find((o) => o.id === normalId);
+    expect(tardio?.paidAfterExpiryAt).toBe(marcadoEm.toISOString());
+    // O contrário também importa: se o campo viesse sempre preenchido, a faixa
+    // apareceria em todo pedido e deixaria de significar alguma coisa.
+    expect(normal?.paidAfterExpiryAt).toBeNull();
+  });
+
   it('aceite explícito registra quem e quando; segundo aceite é rejeitado', async () => {
     const orderId = await createPaidOrder();
     const attendant = await seedUser(prisma, 'attendant');
