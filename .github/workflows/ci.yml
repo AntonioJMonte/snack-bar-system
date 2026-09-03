@@ -54,7 +54,7 @@ jobs:
         run: npm run typecheck
 
       - name: Testes unitários
-        run: npm run test --workspaces
+        run: npm test
 
       # O throttler fica desligado com NODE_ENV=test (decisão #34) — sem isso a
       # suíte quebraria com 429 disfarçado de erro de pagamento.
@@ -74,22 +74,22 @@ jobs:
           set -uo pipefail
           falhou=0
 
-          # .env.example é versionado DE PROPÓSITO (só placeholders); o que não
-          # pode existir é um .env de verdade.
-          arquivos_env='(^|/)\.env$|(^|/)\.env\.(local|development|test|production)$'
-          if git ls-files | grep -qE "$arquivos_env"; then
+          # .env.example é versionado DE PROPÓSITO (só placeholders).
+          # Qualquer outro .env é erro.
+          encontrados=$(git ls-files | grep -E '(^|/)\.env(\.|$)' | grep -v '\.env\.example$' || true)
+          if [ -n "$encontrados" ]; then
             echo "::error::arquivo .env rastreado no repositório:"
-            git ls-files | grep -E "$arquivos_env"
+            echo "$encontrados"
             falhou=1
           fi
 
           # Padrões montados em pedaços para o próprio scanner não se acusar.
-          producao="APP""_USR-"
+          producao="APP""_USR-[A-Za-z0-9_-]{20,}"
           teste="TEST""-[0-9]{6,}"
           token="access_token[\"'\`]?[[:space:]]*[:=][[:space:]]*[\"'\`][A-Za-z0-9_-]{20,}"
 
           for padrao in "$producao" "$teste" "$token"; do
-            if git grep -nIE "$padrao" -- . ':!package-lock.json' ':!.github/workflows/ci.yml'; then
+            if git grep -nIE "$padrao" -- . ':!package-lock.json'; then
               echo "::error::padrão de credencial encontrado em arquivo versionado"
               falhou=1
             fi
