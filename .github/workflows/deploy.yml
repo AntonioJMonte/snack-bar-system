@@ -1,0 +1,82 @@
+name: Deploy
+
+# SOMENTE por botão. Nunca em push.
+#
+# Dois motivos: o provedor de hospedagem ainda não foi escolhido, e deploy
+# automático em sistema que movimenta dinheiro não é adequado a este projeto —
+# quem publica precisa saber que está publicando.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmacao:
+        description: 'Escreva "publicar" para confirmar'
+        required: true
+        default: ''
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lanchonete
+          POSTGRES_PASSWORD: lanchonete
+          POSTGRES_DB: lanchonete_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lanchonete -d lanchonete_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Conferir a confirmação
+        run: |
+          if [ "${{ inputs.confirmacao }}" != "publicar" ]; then
+            echo "::error::confirmação ausente — nada foi publicado"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build -w packages/contracts
+      - run: npm run prisma:generate -w apps/api
+      - run: npm run typecheck
+
+      # A suíte inteira roda ANTES de qualquer publicação. Não existe caminho
+      # que publique com teste vermelho.
+      - run: npm run test --workspaces
+      - run: npm run test:e2e -w apps/api
+
+      # TODO(provedor): quando o provedor for escolhido, descomentar e trocar
+      # pelo comando dele. As credenciais vêm de `secrets`, NUNCA escritas aqui.
+      #
+      # - name: Publicar a API
+      #   env:
+      #     DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      #     MP_ACCESS_TOKEN: ${{ secrets.MP_ACCESS_TOKEN }}
+      #     MP_WEBHOOK_SECRET: ${{ secrets.MP_WEBHOOK_SECRET }}
+      #   run: <comando do provedor>
+      #
+      # - name: Aplicar migrações em produção
+      #   env:
+      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      #   run: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+      #
+      # - name: Publicar o site
+      #   run: <comando do provedor>
+
+      - name: Publicação ainda não configurada
+        run: |
+          echo "Testes passaram. O passo de publicação está comentado ate o provedor ser escolhido."
+          echo "Ver TODO(provedor) em .github/workflows/deploy.yml"
