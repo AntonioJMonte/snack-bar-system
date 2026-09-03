@@ -98,11 +98,20 @@ export default function AdminOrdersPage() {
               </ul>
 
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-2">
-                <span className="text-sm text-ink-muted">
-                  {order.payment
-                    ? `Pagamento ${order.payment.status} · ${order.payment.method}`
-                    : 'Sem pagamento registrado'}
-                </span>
+                <div className="flex flex-col gap-0.5 text-sm text-ink-muted">
+                  {order.payments.length === 0 && <span>Sem pagamento registrado</span>}
+                  {order.payments.map((payment) => (
+                    <span key={payment.id}>
+                      Pagamento {payment.status} · {payment.method}
+                      {payment.gatewayTransactionId ? ` · ${payment.gatewayTransactionId}` : ''}
+                    </span>
+                  ))}
+                  {order.payments.filter((p) => p.status === 'paid').length > 1 && (
+                    <span className="font-bold text-danger">
+                      PAGO DUAS VEZES — conferir e estornar no Mercado Pago
+                    </span>
+                  )}
+                </div>
                 <span className="font-bold tabular-nums">{formatCents(order.totalCents)}</span>
               </div>
             </li>

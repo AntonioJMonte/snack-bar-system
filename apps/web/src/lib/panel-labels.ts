@@ -10,6 +10,7 @@ const PANEL_LABELS: Record<OrderStatus, string> = {
   ready: 'Pronto',
   out_for_delivery: 'A caminho',
   completed: 'Concluído',
+  expired: 'Expirado',
 };
 
 export function panelStatusLabel(status: OrderStatus): string {

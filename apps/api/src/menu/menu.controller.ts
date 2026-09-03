@@ -75,7 +75,7 @@ export class MenuController {
     private readonly prisma: PrismaService,
   ) {}
 
-  // Catálogo COMPLETO para gestão (seção 5.7): diferente de `GET /menu`, inclui
+  // Catálogo COMPLETO para gestão: diferente de `GET /menu`, inclui
   // categorias, itens e adicionais INATIVOS — sem isso não há como reativar o
   // que foi desativado. Gerente+, como o restante do cadastro.
   @Get('catalog')
@@ -92,7 +92,7 @@ export class MenuController {
     });
   }
 
-  // ——— Cadastro (gerente+, seção 5.5) ———
+  // ——— Cadastro (gerente+) ———
 
   @Post('categories')
   @MinRole('manager')
@@ -148,7 +148,7 @@ export class MenuController {
 
   // ——— Operações pontuais ———
 
-  // Alterar preço é operação financeira: gerente+ (seção 5.5).
+  // Alterar preço é operação financeira: gerente
   @Patch('items/:id/price')
   @MinRole('manager')
   updatePrice(
@@ -171,7 +171,7 @@ export class MenuController {
     return this.menuService.updateDiscount(req.user.id, id, discountPercent);
   }
 
-  // Marcar esgotado é operação do dia a dia: atendente+ (seção 5.5).
+  // Marcar esgotado é operação do dia a dia: atendente
   @Patch('items/:id/sold-out')
   @MinRole('attendant')
   setSoldOut(

@@ -147,14 +147,14 @@ describe('GET /orders', () => {
 
     const [order] = (await (await api('/orders', token)).json()) as {
       items: { unitFullPriceCents: number; discountPercentApplied: number; unitNetPriceCents: number }[];
-      payment: unknown;
+      payments: unknown[];
     }[];
 
     // Item de 1000 com 15%: cheio 1000, desconto 150, líquido 850.
     expect(order.items[0].unitFullPriceCents).toBe(1000);
     expect(order.items[0].discountPercentApplied).toBe(15);
     expect(order.items[0].unitNetPriceCents).toBe(850);
-    // Pedido nunca pago: a chave existe e vem nula, não ausente.
-    expect(order.payment).toBeNull();
+    // Pedido nunca pago: a lista existe e vem VAZIA, não ausente (decisão #32).
+    expect(order.payments).toEqual([]);
   });
 });

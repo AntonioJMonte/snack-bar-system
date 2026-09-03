@@ -44,16 +44,16 @@ if (order.status !== 'pending_payment') {
 // Espelha o que o webhook faz: grava o pagamento com um id de transação único e
 // leva o pedido para "aguardando aceite", que é o estado que dispara o alerta.
 await prisma.$transaction(async (tx) => {
-  await tx.payment.upsert({
-    where: { orderId: order.id },
-    create: {
+  // Uma linha por transação (decisão #32): o id simulado é único por pedido, e
+  // rodar o script duas vezes falha no UNIQUE em vez de sobrescrever silenciosamente.
+  await tx.payment.create({
+    data: {
       orderId: order.id,
       method: 'pix',
       status: 'paid',
       gatewayTransactionId: `SIMULADO-${order.id}`,
       amountCents: order.totalCents,
     },
-    update: { status: 'paid', gatewayTransactionId: `SIMULADO-${order.id}` },
   });
   await tx.order.update({
     where: { id: order.id },

@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# O e2e usa o FakeMercadoPago: NENHUMA credencial real do gateway entra aqui.
+# Se algum passo passar a exigir MP_ACCESS_TOKEN de verdade, o desenho está
+# errado — o certo é consertar o teste, não adicionar o segredo.
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lanchonete
+          POSTGRES_PASSWORD: lanchonete
+          # O e2e recusa rodar contra qualquer banco que não seja este
+          # (test/global-setup.ts) — o nome faz parte da trava de segurança.
+          POSTGRES_DB: lanchonete_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lanchonete -d lanchonete_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      # O contrato é consumido por API e web como pacote compilado; sem isto o
+      # typecheck dos dois falha com "não encontra @lanchonete/contracts".
+      - name: Compilar o contrato compartilhado
+        run: npm run build -w packages/contracts
+
+      - name: Gerar o Prisma Client
+        run: npm run prisma:generate -w apps/api
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Testes unitários
+        run: npm test
+
+      # O throttler fica desligado com NODE_ENV=test (decisão #34) — sem isso a
+      # suíte quebraria com 429 disfarçado de erro de pagamento.
+      - name: Testes e2e da API
+        run: npm run test:e2e -w apps/api
+
+  segredos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # O repositório é PÚBLICO: um token commitado por acidente fica exposto na
+      # hora, e trocar credencial de gateway depois de vazada é bem pior do que
+      # falhar um build agora.
+      - name: Procurar credencial versionada
+        run: |
+          set -uo pipefail
+          falhou=0
+
+          # .env.example é versionado DE PROPÓSITO (só placeholders).
+          # Qualquer outro .env é erro.
+          encontrados=$(git ls-files | grep -E '(^|/)\.env(\.|$)' | grep -v '\.env\.example$' || true)
+          if [ -n "$encontrados" ]; then
+            echo "::error::arquivo .env rastreado no repositório:"
+            echo "$encontrados"
+            falhou=1
+          fi
+
+          # Padrões montados em pedaços para o próprio scanner não se acusar.
+          producao="APP""_USR-[A-Za-z0-9_-]{20,}"
+          teste="TEST""-[0-9]{6,}"
+          token="access_token[\"'\`]?[[:space:]]*[:=][[:space:]]*[\"'\`][A-Za-z0-9_-]{20,}"
+
+          for padrao in "$producao" "$teste" "$token"; do
+            if git grep -nIE "$padrao" -- . ':!package-lock.json'; then
+              echo "::error::padrão de credencial encontrado em arquivo versionado"
+              falhou=1
+            fi
+          done
+
+          if [ "$falhou" -ne 0 ]; then exit 1; fi
+          echo "Nenhuma credencial versionada encontrada."

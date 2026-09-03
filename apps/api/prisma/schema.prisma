@@ -102,6 +102,7 @@ enum OrderStatus {
   ready // PDF: pronto
   out_for_delivery // PDF: a_caminho
   completed // PDF: concluido
+  expired // criado e nao pago dentro da janela (decisao #34) — estado terminal
 }
 
 enum DeliveryType {
@@ -114,6 +115,10 @@ model Order {
   number Int         @unique @default(autoincrement()) // visível ao cliente
   channel Channel
   status  OrderStatus @default(pending_payment)
+
+  // Deduplicacao do "finalizar pedido" (decisao #33): chave gerada pelo
+  // navegador, uma por tentativa de checkout. Nula quando o canal nao envia.
+  idempotencyKey String? @unique @map("idempotency_key")
 
   customerName  String @map("customer_name")
   customerPhone String @map("customer_phone") // obrigatório em todos os canais/entregas
@@ -130,7 +135,16 @@ model Order {
   deliveryFeeCents   Int @map("delivery_fee_cents")
   totalCents         Int @map("total_cents")
 
+  // Preferencia de checkout ja criada no gateway: reaproveitada em vez de gerar
+  // outra a cada clique (decisao #33).
+  checkoutInitPoint String? @map("checkout_init_point")
+
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // Expiracao (decisao #34): 15 min de QR + 10 min de tolerancia.
+  expiredAt         DateTime? @map("expired_at") @db.Timestamptz(3)
+  // Pagamento que chegou DEPOIS da expiracao: o pedido volta para aceite, mas
+  // com marca permanente para que ninguem o confunda com um pedido novo.
+  paidAfterExpiryAt DateTime? @map("paid_after_expiry_at") @db.Timestamptz(3)
   acceptedAt   DateTime? @map("accepted_at") @db.Timestamptz(3)
   acceptedById String?   @map("accepted_by_id") @db.Uuid
   acceptedBy   User?     @relation(fields: [acceptedById], references: [id])
@@ -139,8 +153,8 @@ model Order {
   printedAt  DateTime? @map("printed_at") @db.Timestamptz(3)
   printCount Int?      @map("print_count")
 
-  items   OrderItem[]
-  payment Payment?
+  items    OrderItem[]
+  payments Payment[]
 
   @@map("orders")
 }
@@ -193,9 +207,14 @@ enum PaymentStatus {
   refunded // PDF: estornado
 }
 
+// UMA LINHA POR TRANSACAO DO GATEWAY (decisao #32). O modelo anterior tinha
+// `order_id` unico e o upsert sobrescrevia a tentativa anterior: um cartao
+// recusado seguido de um Pix aprovado apagava o registro do cartao, e um segundo
+// pagamento aprovado no mesmo pedido nao era gravado em lugar nenhum. Com uma
+// linha por transacao a tabela bate 1:1 com o extrato do Mercado Pago.
 model Payment {
   id      String        @id @default(uuid(7)) @db.Uuid
-  orderId String        @unique @map("order_id") @db.Uuid // um pagamento por pedido
+  orderId String        @map("order_id") @db.Uuid
   order   Order         @relation(fields: [orderId], references: [id])
   method  PaymentMethod
   status  PaymentStatus @default(pending)
@@ -208,6 +227,7 @@ model Payment {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  @@index([orderId])
   @@map("payments")
 }
 

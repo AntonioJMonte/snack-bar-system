@@ -11,6 +11,7 @@ const CUSTOMER_LABELS: Record<OrderStatus, string> = {
   ready: 'Pronto',
   out_for_delivery: 'A caminho',
   completed: 'Concluído',
+  expired: 'Expirado — pagamento não recebido',
 };
 
 export function customerStatusLabel(status: OrderStatus): string {

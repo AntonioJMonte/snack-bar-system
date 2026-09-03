@@ -49,10 +49,14 @@ export function fetchStoreSchedules() {
   });
 }
 
-export function createOrder(input: CreateOrderRequest) {
+// A chave de idempotência viaja no cabeçalho, nunca no corpo (decisão #33):
+// o corpo é o pedido, e o servidor ignora tudo que não seja item/quantidade.
+// Repetir a mesma chave devolve o pedido já criado, com 200 em vez de 201.
+export function createOrder(input: CreateOrderRequest, idempotencyKey?: string) {
   return apiRequest(orderRoute.create.url(), orderSchema, {
     method: orderRoute.create.method,
     body: input,
+    ...(idempotencyKey ? { headers: { 'idempotency-key': idempotencyKey } } : {}),
   });
 }
 

@@ -14,6 +14,12 @@ const envSchema = z.object({
   // navegador é só navegação — NUNCA prova de pagamento, seção 5.3).
   // A API ocupa a 3001; o site roda na 3000.
   WEB_ORIGIN: z.url().default('http://localhost:3000'),
+  // Saltos de proxy confiáveis (decisão #35). 0 = não confia em ninguém, que é
+  // o certo em desenvolvimento. Atrás de Railway/Render/Cloudflare, sem isto o
+  // `req.ip` vira o IP do PROXY e todos os clientes caem no mesmo balde: o rate
+  // limiting deixa de proteger por cliente e passa a derrubar a loja inteira.
+  // O número correto vem do provedor e só é definido no deploy.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   STORE_TIMEZONE: z.string().refine(
     (tz) => {
       try {

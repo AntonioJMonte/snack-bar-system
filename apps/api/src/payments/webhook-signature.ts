@@ -11,6 +11,22 @@ export interface SignatureInput {
   xRequestId: string | undefined;
   dataId: string;
   secret: string;
+  now?: Date; // injetável no teste
+}
+
+// Janela de frescor (decisão #36). Sem ela, uma assinatura capturada uma vez vale
+// PARA SEMPRE: quem interceptar um webhook legítimo pode reenviá-lo meses depois.
+// 5 minutos cobre atraso de rede e reenvio do gateway; a folga de 1 minuto para
+// trás e para frente absorve relógio dessincronizado entre servidores.
+export const SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
+export const SIGNATURE_CLOCK_SKEW_MS = 60 * 1000;
+
+// O `ts` do Mercado Pago é Unix. Documentação e integrações reais divergem entre
+// segundos e milissegundos, então aceitamos os dois: abaixo de 10^12 é segundo.
+function parseTimestamp(ts: string): number | null {
+  const value = Number(ts);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value < 1_000_000_000_000 ? value * 1000 : value;
 }
 
 export function validateMercadoPagoSignature(input: SignatureInput): boolean {
@@ -25,6 +41,12 @@ export function validateMercadoPagoSignature(input: SignatureInput): boolean {
   const ts = parts.get('ts');
   const v1 = parts.get('v1');
   if (!ts || !v1) return false;
+
+  const signedAt = parseTimestamp(ts);
+  if (signedAt === null) return false;
+  const now = (input.now ?? new Date()).getTime();
+  const age = now - signedAt;
+  if (age > SIGNATURE_MAX_AGE_MS || age < -SIGNATURE_CLOCK_SKEW_MS) return false;
 
   // A MP normaliza data.id alfanumérico para minúsculas no manifesto.
   const dataId = /[a-zA-Z]/.test(input.dataId) ? input.dataId.toLowerCase() : input.dataId;

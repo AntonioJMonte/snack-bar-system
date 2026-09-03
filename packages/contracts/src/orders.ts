@@ -92,6 +92,9 @@ export const orderSchema = z.object({
   deliveryFeeCents: z.number().int(),
   totalCents: z.number().int(),
   createdAt: z.string(),
+  // Marca permanente do pagamento recebido apos a expiracao (decisao #34): o
+  // painel destaca o pedido para que ninguem o confunda com um pedido novo.
+  paidAfterExpiryAt: z.string().nullable().optional(),
   acceptedAt: z.string().nullable(),
   acceptedById: z.string().nullable(),
   items: z.array(orderItemSchema),
