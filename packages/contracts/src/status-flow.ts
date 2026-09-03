@@ -23,7 +23,7 @@ export function allowedNextStatus(
     case 'out_for_delivery':
       return deliveryType === 'delivery' ? 'completed' : null;
     default:
-      return null; // pending_payment/awaiting_acceptance/completed não avançam por aqui
+      return null; // pending_payment/awaiting_acceptance/completed/expired não avançam por aqui
   }
 }
 

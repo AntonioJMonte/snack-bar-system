@@ -46,6 +46,18 @@ export function OrderCard({ order, busy, onAccept, onAdvance }: OrderCardProps) 
         </span>
       </header>
 
+      {/* Pagamento que chegou DEPOIS da expiração (decisão #34). O aceite já é
+          humano, então nada entra em produção sozinho — o que faltava era a
+          pessoa saber que este pedido não é novo antes de apertar Aceitar. */}
+      {order.paidAfterExpiryAt && (
+        <p
+          role="alert"
+          className="mt-3 rounded-lg border-2 border-danger bg-danger/10 px-3 py-2 text-base font-bold text-danger"
+        >
+          PAGAMENTO FORA DO PRAZO — confirme com o cliente antes de aceitar
+        </p>
+      )}
+
       <div className="mt-3">
         <p className={cn('font-medium', needsAcceptance && 'text-lg')}>{order.customerName}</p>
         {/* Telefone visível e clicável para ligar direto do celular (plano 14.3). */}

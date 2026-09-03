@@ -11,6 +11,14 @@ import { lineSignature, type CartLine } from './cart-math';
 
 interface CartState {
   lines: CartLine[];
+  // Chave de idempotência do checkout (decisão #33). Vive AQUI, junto do
+  // carrinho persistido, porque o cenário que ela resolve é justamente o do
+  // celular com internia ruim: o cliente clica, não vê resposta, recarrega a
+  // página e clica de novo. Se a chave morresse com o componente, o segundo
+  // clique criaria outro pedido — exatamente o que ela existe para impedir.
+  // Zera a cada mudança do carrinho: carrinho diferente é pedido diferente.
+  checkoutKey: string | null;
+  ensureCheckoutKey: () => string;
   addLine: (input: Omit<CartLine, 'lineId'>) => void;
   removeLine: (lineId: string) => void;
   setQuantity: (lineId: string, quantity: number) => void;
@@ -19,8 +27,17 @@ interface CartState {
 
 export const useCart = create<CartState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       lines: [],
+      checkoutKey: null,
+
+      ensureCheckoutKey: () => {
+        const current = get().checkoutKey;
+        if (current) return current;
+        const key = crypto.randomUUID();
+        set({ checkoutKey: key });
+        return key;
+      },
 
       addLine: (input) =>
         set((state) => {
@@ -28,6 +45,7 @@ export const useCart = create<CartState>()(
           const existing = state.lines.find((l) => lineSignature(l) === signature);
           if (existing) {
             return {
+              checkoutKey: null,
               lines: state.lines.map((l) =>
                 l.lineId === existing.lineId
                   ? { ...l, quantity: l.quantity + input.quantity }
@@ -36,22 +54,27 @@ export const useCart = create<CartState>()(
             };
           }
           return {
+            checkoutKey: null,
             lines: [...state.lines, { ...input, lineId: crypto.randomUUID() }],
           };
         }),
 
       removeLine: (lineId) =>
-        set((state) => ({ lines: state.lines.filter((l) => l.lineId !== lineId) })),
+        set((state) => ({
+          checkoutKey: null,
+          lines: state.lines.filter((l) => l.lineId !== lineId),
+        })),
 
       setQuantity: (lineId, quantity) =>
         set((state) => ({
+          checkoutKey: null,
           lines:
             quantity <= 0
               ? state.lines.filter((l) => l.lineId !== lineId)
               : state.lines.map((l) => (l.lineId === lineId ? { ...l, quantity } : l)),
         })),
 
-      clear: () => set({ lines: [] }),
+      clear: () => set({ lines: [], checkoutKey: null }),
     }),
     { name: 'lanchonete.cart' },
   ),

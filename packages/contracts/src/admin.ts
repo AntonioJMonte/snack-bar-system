@@ -86,8 +86,11 @@ export const paymentSchema = z.object({
 });
 export type Payment = z.infer<typeof paymentSchema>;
 
+// LISTA de pagamentos (decisão #32): um pedido pode ter várias transações — a
+// recusada e a aprovada, ou duas aprovadas quando o cliente pagou duas vezes.
+// É aqui que o segundo pagamento fica visível para quem precisa estornar.
 export const orderHistoryEntrySchema = orderSchema.extend({
-  payment: paymentSchema.nullable(),
+  payments: z.array(paymentSchema),
 });
 export type OrderHistoryEntry = z.infer<typeof orderHistoryEntrySchema>;
 export const orderHistorySchema = z.array(orderHistoryEntrySchema);

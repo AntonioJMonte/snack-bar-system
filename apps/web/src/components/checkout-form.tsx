@@ -16,6 +16,7 @@ export function CheckoutForm({ regions }: { regions: DeliveryRegion[] }) {
   const setQuantity = useCart((state) => state.setQuantity);
   const removeLine = useCart((state) => state.removeLine);
   const clear = useCart((state) => state.clear);
+  const ensureCheckoutKey = useCart((state) => state.ensureCheckoutKey);
 
   const [mounted, setMounted] = useState(false);
   const [name, setName] = useState('');
@@ -53,21 +54,29 @@ export function CheckoutForm({ regions }: { regions: DeliveryRegion[] }) {
     setSubmitting(true);
 
     try {
+      // Mesma chave em TODAS as tentativas deste checkout: a segunda tentativa
+      // depois de uma falha de rede devolve o pedido que já existe, em vez de
+      // criar outro. Só muda quando o carrinho muda ou o pedido é concluído.
+      const idempotencyKey = ensureCheckoutKey();
+
       // O payload leva SOMENTE item, quantidade, adicionais e observação.
       // Nenhum preço, desconto ou total é enviado (seção 5.4, regra 3).
-      const order = await createOrder({
-        channel: 'web',
-        customerName: name,
-        customerPhone: phone,
-        deliveryType,
-        ...(deliveryType === 'delivery' ? { address, regionId } : {}),
-        items: lines.map((line) => ({
-          itemId: line.itemId,
-          quantity: line.quantity,
-          addonIds: line.addons.map((addon) => addon.id),
-          ...(line.note ? { note: line.note } : {}),
-        })),
-      });
+      const order = await createOrder(
+        {
+          channel: 'web',
+          customerName: name,
+          customerPhone: phone,
+          deliveryType,
+          ...(deliveryType === 'delivery' ? { address, regionId } : {}),
+          items: lines.map((line) => ({
+            itemId: line.itemId,
+            quantity: line.quantity,
+            addonIds: line.addons.map((addon) => addon.id),
+            ...(line.note ? { note: line.note } : {}),
+          })),
+        },
+        idempotencyKey,
+      );
 
       const { initPoint } = await createCheckout(order.id);
 

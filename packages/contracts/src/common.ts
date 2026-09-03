@@ -12,6 +12,7 @@ export const orderStatusSchema = z.enum([
   'ready',
   'out_for_delivery',
   'completed',
+  'expired', // nao pago dentro da janela (decisao #34) — terminal
 ]);
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
 
