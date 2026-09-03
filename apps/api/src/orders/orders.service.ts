@@ -1,11 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { OrderStatus } from '@prisma/client';
+import { Prisma, type OrderStatus } from '@prisma/client';
 import { DomainError } from '../common/domain-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { canTransition } from './domain/status-flow';
 import { StoreStatusService } from '../store/store-status.service';
 import { buildOrder, type CatalogItem } from './domain/build-order';
 import type { CreateOrderInput } from './dto/create-order.schema';
+import { ORDER_EXPIRY_MINUTES } from '../common/order-expiry';
+
+type OrderWithItems = Prisma.OrderGetPayload<{
+  include: { items: { include: { addons: true } } };
+}>;
 
 @Injectable()
 export class OrdersService {
@@ -16,7 +21,53 @@ export class OrdersService {
     private readonly storeStatus: StoreStatusService,
   ) {}
 
-  async create(input: CreateOrderInput) {
+  // Reaproveita o pedido já criado com esta chave (decisão #33). O include é o
+  // mesmo do create para que a resposta repetida seja idêntica à original.
+  private findByIdempotencyKey(idempotencyKey: string) {
+    return this.prisma.order.findUnique({
+      where: { idempotencyKey },
+      include: { items: { include: { addons: true } } },
+    });
+  }
+
+  // `reused: true` faz o controller responder 200 em vez de 201 — a diferença
+  // entre "criei agora" e "isto já existia" fica visível para o cliente.
+  async create(
+    input: CreateOrderInput,
+    idempotencyKey?: string,
+  ): Promise<{ order: OrderWithItems; reused: boolean }> {
+    // Internet instável: o cliente clica "finalizar pedido", não vê a resposta e
+    // clica de novo. Sem esta checagem, cada clique vira um pedido e uma cobrança.
+    if (idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(idempotencyKey);
+      if (existing) {
+        this.logger.log(`order.idempotent_hit id=${existing.id} number=${existing.number}`);
+        return { order: existing, reused: true };
+      }
+    }
+
+    try {
+      return { order: await this.persist(input, idempotencyKey), reused: false };
+    } catch (error) {
+      // Corrida entre dois cliques quase simultâneos: o UNIQUE do banco decide
+      // quem cria. Isto é caminho NORMAL, não erro — quem perdeu devolve o pedido
+      // que o outro acabou de criar.
+      if (
+        idempotencyKey &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await this.findByIdempotencyKey(idempotencyKey);
+        if (existing) {
+          this.logger.log(`order.idempotent_race id=${existing.id} number=${existing.number}`);
+          return { order: existing, reused: true };
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async persist(input: CreateOrderInput, idempotencyKey?: string) {
     const now = new Date();
 
     // Criação inteira dentro de UMA transação (seção 9): leitura do cardápio,
@@ -39,6 +90,7 @@ export class OrdersService {
 
       return tx.order.create({
         data: {
+          idempotencyKey: idempotencyKey ?? null,
           channel: built.channel,
           customerName: built.customerName,
           customerPhone: built.customerPhone,
@@ -74,6 +126,19 @@ export class OrdersService {
     );
 
     return order;
+  }
+
+  // Expiração do pedido não pago (decisão #34). Sem isto, pedido abandonado fica
+  // em `pending_payment` para sempre, ocupa os slots da reconciliação e a rede de
+  // segurança contra webhook perdido para de funcionar — em silêncio.
+  async expireAbandonedOrders(windowMinutes = ORDER_EXPIRY_MINUTES) {
+    const cutoff = new Date(Date.now() - windowMinutes * 60 * 1000);
+    const { count } = await this.prisma.order.updateMany({
+      where: { status: 'pending_payment', createdAt: { lt: cutoff } },
+      data: { status: 'expired', expiredAt: new Date() },
+    });
+    if (count > 0) this.logger.log(`order.expired count=${count} window_minutes=${windowMinutes}`);
+    return { expired: count };
   }
 
   // Visão do cliente para acompanhamento: status e resumo, nada operacional.

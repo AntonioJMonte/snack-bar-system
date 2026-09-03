@@ -68,10 +68,13 @@ export async function loginAs(baseUrl: string, email: string): Promise<string> {
   return body.accessToken;
 }
 
-export function postOrder(baseUrl: string, body: unknown) {
+export function postOrder(baseUrl: string, body: unknown, idempotencyKey?: string) {
   return fetch(`${baseUrl}/orders`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
+    },
     body: JSON.stringify(body),
   });
 }

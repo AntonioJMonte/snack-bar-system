@@ -10,6 +10,7 @@ import {
   UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { z } from 'zod';
 import { JwtAuthGuard, type AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { MinRole } from '../auth/min-role.decorator';
@@ -31,6 +32,10 @@ const advanceStatusSchema = z.object({
 
 // Painel de produção (seção 8): módulo de SAÍDA — não conhece nenhum canal de
 // entrada (seção 13); fala apenas com o backend.
+// Grupo do painel (decisão #35): 120/min por IP. É o mesmo valor do padrão
+// global, declarado aqui de propósito — quem mexer no padrão precisa ver que
+// existe um piso operacional atrás dele (polling de 6s × aparelhos no NAT).
+@Throttle({ default: { limit: 120, ttl: 60_000 } })
 @Controller('panel')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @MinRole('attendant')

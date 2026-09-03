@@ -4,6 +4,9 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module';
+import { ORDER_EXPIRY_MINUTES } from '../src/common/order-expiry';
+import { OrdersService } from '../src/orders/orders.service';
+import { PaymentsService as PaymentsServiceClass } from '../src/payments/payments.service';
 import { ORDER_PAID, type OrderPaidEvent } from '../src/common/events';
 import { MercadoPagoClient, type GatewayPayment } from '../src/payments/gateway';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -39,7 +42,9 @@ let fakeGateway: FakeMercadoPago;
 let paidEvents: OrderPaidEvent[];
 
 function signedHeaders(dataId: string, secret: string = TEST_ENV.MP_WEBHOOK_SECRET) {
-  const ts = '1700000000';
+  // Timestamp do MOMENTO: a assinatura tem janela de 5 min (decisão #36), então
+  // um ts fixo de 2023 seria recusado — como deve ser.
+  const ts = String(Math.floor(Date.now() / 1000));
   const requestId = 'req-e2e';
   const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`;
   const v1 = createHmac('sha256', secret).update(manifest).digest('hex');
@@ -117,7 +122,7 @@ describe('webhook do Mercado Pago (e2e)', () => {
 
     const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
     expect(order.status).toBe('awaiting_acceptance');
-    const payment = await prisma.payment.findUniqueOrThrow({ where: { orderId } });
+    const payment = await prisma.payment.findFirstOrThrow({ where: { orderId } });
     expect(payment).toMatchObject({
       status: 'paid',
       method: 'pix',
@@ -194,14 +199,23 @@ describe('webhook do Mercado Pago (e2e)', () => {
     });
 
     await webhook('tx-4a');
-    let payment = await prisma.payment.findUniqueOrThrow({ where: { orderId } });
-    expect(payment.status).toBe('declined');
+    const declined = await prisma.payment.findUniqueOrThrow({
+      where: { gatewayTransactionId: 'tx-4a' },
+    });
+    expect(declined.status).toBe('declined');
     expect(paidEvents).toHaveLength(0); // recusa não dispara alerta (6.3)
 
     await webhook('tx-4b');
-    payment = await prisma.payment.findUniqueOrThrow({ where: { orderId } });
-    expect(payment).toMatchObject({ status: 'paid', gatewayTransactionId: 'tx-4b' });
-    expect(await prisma.payment.count()).toBe(1);
+    const approved = await prisma.payment.findUniqueOrThrow({
+      where: { gatewayTransactionId: 'tx-4b' },
+    });
+    expect(approved.status).toBe('paid');
+    // A tentativa recusada CONTINUA no banco (decisão #32): antes o upsert a
+    // sobrescrevia e o id do cartão recusado sumia do registro.
+    expect(await prisma.payment.count({ where: { orderId } })).toBe(2);
+    expect(
+      await prisma.payment.count({ where: { orderId, gatewayTransactionId: 'tx-4a' } }),
+    ).toBe(1);
     expect(paidEvents).toHaveLength(1);
   });
 
@@ -294,5 +308,207 @@ describe('checkout (e2e)', () => {
       { method: 'POST' },
     );
     expect(response.status).toBe(404);
+  });
+});
+
+describe('concorrência entre webhook e reconciliação (e2e)', () => {
+  it('webhook e reconciliação simultâneos sobre o mesmo pedido publicam order.paid UMA vez', async () => {
+    const { orderId, totalCents } = await createPendingOrder();
+    // Antigo o bastante para a reconciliação enxergar o pedido.
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { createdAt: new Date(Date.now() - 10 * 60 * 1000) },
+    });
+    fakeGateway.payments.set('tx-race', {
+      id: 'tx-race',
+      status: 'approved',
+      externalReference: orderId,
+      transactionAmount: totalCents / 100,
+      paymentMethodId: 'pix',
+      paymentTypeId: 'bank_transfer',
+    });
+
+    const { PaymentsService } = await import('../src/payments/payments.service');
+    const service = app.get(PaymentsService);
+
+    // Dez chamadas concorrentes sobre o MESMO pedido: cinco pelo webhook, cinco
+    // pela reconciliação. Sem serialização no banco, duas delas conseguem ler
+    // `pending_payment` antes de qualquer commit e ambas publicam o evento.
+    await Promise.all([
+      webhook('tx-race'),
+      service.reconcilePendingOrders(5),
+      webhook('tx-race'),
+      service.reconcilePendingOrders(5),
+      webhook('tx-race'),
+      service.reconcilePendingOrders(5),
+      webhook('tx-race'),
+      service.reconcilePendingOrders(5),
+      webhook('tx-race'),
+      service.reconcilePendingOrders(5),
+    ]);
+
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    expect(order.status).toBe('awaiting_acceptance');
+    expect(await prisma.payment.count()).toBe(1);
+
+    // A asserção que importa (seção 9.1): um pedido pago, um alerta.
+    expect(
+      paidEvents.length,
+      `order.paid foi publicado ${paidEvents.length}x — esperado exatamente 1`,
+    ).toBe(1);
+  });
+});
+
+// ─────────── Pagamento duplicado no mesmo pedido (decisão #32) ───────────
+
+describe('duas transações no mesmo pedido (e2e)', () => {
+  it('cartão recusado, Pix aprovado e cartão aprovado com atraso: TODAS ficam no banco', async () => {
+    const { orderId, totalCents } = await createPendingOrder();
+    const reais = totalCents / 100;
+    const base = { externalReference: orderId, transactionAmount: reais };
+    fakeGateway.payments.set('tx-card-1', {
+      ...base,
+      id: 'tx-card-1',
+      status: 'rejected',
+      paymentMethodId: 'master',
+      paymentTypeId: 'credit_card',
+    });
+    fakeGateway.payments.set('tx-pix-2', {
+      ...base,
+      id: 'tx-pix-2',
+      status: 'approved',
+      paymentMethodId: 'pix',
+      paymentTypeId: 'bank_transfer',
+    });
+    fakeGateway.payments.set('tx-card-3', {
+      ...base,
+      id: 'tx-card-3',
+      status: 'approved',
+      paymentMethodId: 'master',
+      paymentTypeId: 'credit_card',
+    });
+
+    await webhook('tx-card-1');
+    await webhook('tx-pix-2');
+    const late = await webhook('tx-card-3');
+
+    // O segundo APROVADO é registrado, não descartado: entrou dinheiro duas
+    // vezes e alguém precisa estornar. Antes isto sumia sem deixar rastro.
+    expect(((await late.json()) as { outcome: string }).outcome).toBe('duplicate_payment');
+
+    const payments = await prisma.payment.findMany({ where: { orderId }, orderBy: { createdAt: 'asc' } });
+    expect(payments.map((p) => p.gatewayTransactionId)).toEqual([
+      'tx-card-1',
+      'tx-pix-2',
+      'tx-card-3',
+    ]);
+    expect(payments.filter((p) => p.status === 'paid')).toHaveLength(2);
+
+    // Um pedido, um alerta — mesmo com dois pagamentos aprovados (seção 9.1).
+    expect(paidEvents).toHaveLength(1);
+  });
+
+  it('estorno chega no MESMO id do pagamento e é registrado', async () => {
+    const { orderId, totalCents } = await createPendingOrder();
+    const payment = {
+      id: 'tx-estorno',
+      externalReference: orderId,
+      transactionAmount: totalCents / 100,
+      paymentMethodId: 'pix',
+      paymentTypeId: 'bank_transfer',
+    };
+    fakeGateway.payments.set('tx-estorno', { ...payment, status: 'approved' });
+    await webhook('tx-estorno');
+
+    // O gateway devolve o MESMO id com status novo. O curto-circuito de
+    // idempotência engolia este caso e o estorno nunca era gravado.
+    fakeGateway.payments.set('tx-estorno', { ...payment, status: 'refunded' });
+    await webhook('tx-estorno');
+
+    const stored = await prisma.payment.findUniqueOrThrow({
+      where: { gatewayTransactionId: 'tx-estorno' },
+    });
+    expect(stored.status).toBe('refunded');
+    expect(await prisma.payment.count({ where: { orderId } })).toBe(1);
+  });
+});
+
+// ─────────── Expiração e pagamento tardio (decisão #34) ───────────
+
+describe('expiração do pedido não pago (e2e)', () => {
+  async function backdate(orderId: string, minutes: number) {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { createdAt: new Date(Date.now() - minutes * 60 * 1000) },
+    });
+  }
+
+  it('pedido abandonado além da janela vira expired e SAI da reconciliação', async () => {
+    const { orderId, totalCents } = await createPendingOrder();
+    await backdate(orderId, ORDER_EXPIRY_MINUTES + 5);
+    // O gateway TEM um pagamento aprovado para este pedido: se a reconciliação
+    // ainda o enxergasse, ele seria regularizado e o teste falharia.
+    fakeGateway.payments.set('tx-zumbi', {
+      id: 'tx-zumbi',
+      status: 'approved',
+      externalReference: orderId,
+      transactionAmount: totalCents / 100,
+      paymentMethodId: 'pix',
+      paymentTypeId: 'bank_transfer',
+    });
+
+    const ordersService = app.get(OrdersService);
+    expect(await ordersService.expireAbandonedOrders()).toEqual({ expired: 1 });
+
+    const expired = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    expect(expired.status).toBe('expired');
+    expect(expired.expiredAt).not.toBeNull();
+
+    const service = app.get(PaymentsServiceClass);
+    expect(await service.reconcilePendingOrders(5)).toEqual({ checked: 0, regularized: 0 });
+    expect(paidEvents).toHaveLength(0);
+  });
+
+  it('pedido dentro da janela NÃO expira', async () => {
+    const { orderId } = await createPendingOrder();
+    await backdate(orderId, ORDER_EXPIRY_MINUTES - 5);
+    const ordersService = app.get(OrdersService);
+    expect(await ordersService.expireAbandonedOrders()).toEqual({ expired: 0 });
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    expect(order.status).toBe('pending_payment');
+  });
+
+  it('pagamento que chega DEPOIS da expiração volta para aceite, marcado', async () => {
+    const { orderId, totalCents } = await createPendingOrder();
+    await backdate(orderId, ORDER_EXPIRY_MINUTES + 5);
+    await app.get(OrdersService).expireAbandonedOrders();
+
+    fakeGateway.payments.set('tx-tardio', {
+      id: 'tx-tardio',
+      status: 'approved',
+      externalReference: orderId,
+      transactionAmount: totalCents / 100,
+      paymentMethodId: 'pix',
+      paymentTypeId: 'bank_transfer',
+    });
+    const response = await webhook('tx-tardio');
+    expect(((await response.json()) as { outcome: string }).outcome).toBe('became_paid');
+
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    // Volta para aceite porque quem pagou está esperando o lanche — mas o aceite
+    // é humano e a marca diz à pessoa que este pedido não é novo (decisão #34).
+    expect(order.status).toBe('awaiting_acceptance');
+    expect(order.paidAfterExpiryAt).not.toBeNull();
+    expect(paidEvents).toHaveLength(1);
+  });
+
+  it('pedido expirado não aceita novo checkout — precisa de pedido novo', async () => {
+    const { orderId } = await createPendingOrder();
+    await backdate(orderId, ORDER_EXPIRY_MINUTES + 5);
+    await app.get(OrdersService).expireAbandonedOrders();
+
+    const response = await fetch(`${baseUrl}/payments/checkout/${orderId}`, { method: 'POST' });
+    expect(response.status).toBe(422);
+    expect(((await response.json()) as { code: string }).code).toBe('ORDER_NOT_PAYABLE');
   });
 });

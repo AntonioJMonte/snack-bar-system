@@ -3,14 +3,18 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   NotFoundException,
   Param,
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
   UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { z } from 'zod';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { MinRole } from '../auth/min-role.decorator';
@@ -31,6 +35,7 @@ const historyQuerySchema = z.object({
       'ready',
       'out_for_delivery',
       'completed',
+      'expired',
     ])
     .optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -55,7 +60,7 @@ export class OrdersController {
       where: status ? { status } : {},
       orderBy: { createdAt: 'desc' },
       take: limit,
-      include: { items: { include: { addons: true } }, payment: true },
+      include: { items: { include: { addons: true } }, payments: true },
     });
   }
 
@@ -68,8 +73,24 @@ export class OrdersController {
     return order;
   }
 
+  // Rota pública de maior valor para o cliente e maior exposição: limite próprio
+  // (decisão #35). 60/min por IP porque o CGNAT das operadoras móveis faz dezenas
+  // de clientes distintos saírem pelo MESMO IP numa sexta à noite.
   @Post()
-  async create(@Body() body: unknown) {
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async create(
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKeyHeader: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // Chave ausente ou fora do formato não bloqueia o pedido: o canal que não
+    // manda chave continua funcionando como antes (compatibilidade).
+    const idempotencyKey = idempotencyKeyHeader?.trim();
+    const usableKey =
+      idempotencyKey && idempotencyKey.length > 0 && idempotencyKey.length <= 100
+        ? idempotencyKey
+        : undefined;
+
     const parsed = createOrderSchema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException({
@@ -82,7 +103,11 @@ export class OrdersController {
     }
 
     try {
-      return await this.ordersService.create(parsed.data);
+      const { order, reused } = await this.ordersService.create(parsed.data, usableKey);
+      // 200 quando o pedido já existia: o cliente que clicou duas vezes recebe o
+      // MESMO pedido, e a resposta diz que nada novo foi criado.
+      res.status(reused ? 200 : 201);
+      return order;
     } catch (error) {
       if (error instanceof DomainError) {
         throw new UnprocessableEntityException({

@@ -15,6 +15,12 @@ export interface GatewayPayment {
   paymentTypeId: string | null; // ex.: "bank_transfer", "credit_card", "debit_card"
 }
 
+// Teto de espera por QUALQUER chamada ao Mercado Pago (decisão #36). O webhook
+// consulta o gateway DENTRO da requisição: sem timeout, uma instabilidade lá
+// prende conexões aqui, e várias notificações simultâneas travam a API. O padrão
+// do SDK é 10s — 8s deixa margem para o nosso 5xx sair antes de o MP desistir.
+export const GATEWAY_TIMEOUT_MS = 8_000;
+
 export interface CheckoutPreferenceInput {
   orderId: string;
   orderNumber: number;
@@ -29,7 +35,10 @@ export class MercadoPagoClient {
   private readonly webOrigin: string;
 
   constructor(@Inject(ENV) env: Env) {
-    this.config = new MercadoPagoConfig({ accessToken: env.MP_ACCESS_TOKEN });
+    this.config = new MercadoPagoConfig({
+      accessToken: env.MP_ACCESS_TOKEN,
+      options: { timeout: GATEWAY_TIMEOUT_MS },
+    });
     this.webOrigin = env.WEB_ORIGIN;
   }
 
