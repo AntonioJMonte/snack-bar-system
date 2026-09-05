@@ -9,4 +9,7 @@ export const TEST_ENV = {
   JWT_TTL: '1h',
   MP_ACCESS_TOKEN: 'TEST-token-fake',
   MP_WEBHOOK_SECRET: 'webhook-secret-de-teste',
+  API_PUBLIC_URL: 'https://api-de-teste.local',
+  // Obrigatória desde a sessão 08 (perdeu o padrão de localhost:3000).
+  WEB_ORIGIN: 'http://localhost:3000',
 } as const;

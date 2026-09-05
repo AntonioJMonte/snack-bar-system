@@ -84,6 +84,7 @@ export class PaymentsService {
       orderId: order.id,
       orderNumber: order.number,
       totalCents: order.totalCents,
+      orderCreatedAt: order.createdAt,
     });
 
     // Chamada ao gateway é I/O e não pode acontecer dentro de transação, então

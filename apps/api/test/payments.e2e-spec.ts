@@ -1,14 +1,18 @@
 import { createHmac } from 'node:crypto';
-import type { INestApplication } from '@nestjs/common';
+import { Logger, type INestApplication } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test } from '@nestjs/testing';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { ORDER_EXPIRY_MINUTES } from '../src/common/order-expiry';
 import { OrdersService } from '../src/orders/orders.service';
 import { PaymentsService as PaymentsServiceClass } from '../src/payments/payments.service';
 import { ORDER_PAID, type OrderPaidEvent } from '../src/common/events';
-import { MercadoPagoClient, type GatewayPayment } from '../src/payments/gateway';
+import {
+  MercadoPagoClient,
+  type CheckoutPreferenceInput,
+  type GatewayPayment,
+} from '../src/payments/gateway';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { postOrder, seedCatalog, seedOpenAllDay, truncateAll } from './seed';
 import { TEST_ENV } from './test-env';
@@ -19,6 +23,7 @@ import { TEST_ENV } from './test-env';
 
 class FakeMercadoPago {
   payments = new Map<string, GatewayPayment>();
+  lastCheckoutInput: CheckoutPreferenceInput | undefined;
 
   async getPayment(id: string): Promise<GatewayPayment> {
     const payment = this.payments.get(id);
@@ -30,7 +35,8 @@ class FakeMercadoPago {
     return [...this.payments.values()].filter((p) => p.externalReference === orderId);
   }
 
-  async createCheckout(): Promise<{ initPoint: string }> {
+  async createCheckout(input: CheckoutPreferenceInput): Promise<{ initPoint: string }> {
+    this.lastCheckoutInput = input;
     return { initPoint: 'https://fake.mercadopago/checkout' };
   }
 }
@@ -138,7 +144,7 @@ describe('webhook do Mercado Pago (e2e)', () => {
     expect(paidEvents[0].orderId).toBe(orderId);
   });
 
-  it('assinatura inválida: 401, nada confirmado', async () => {
+  it('assinatura inválida: 401, nada confirmado, e o motivo fica no log', async () => {
     const { orderId, totalCents } = await createPendingOrder();
     fakeGateway.payments.set('tx-2', {
       id: 'tx-2',
@@ -149,8 +155,33 @@ describe('webhook do Mercado Pago (e2e)', () => {
       paymentTypeId: 'bank_transfer',
     });
 
-    const response = await webhook('tx-2', signedHeaders('tx-2', 'segredo-errado'));
-    expect(response.status).toBe(401);
+    // O 401 do webhook é o caminho mais crítico do sistema e falhava em SILÊNCIO.
+    // Sem este log não há como diagnosticar em produção se o 401 é segredo
+    // errado, relógio dessincronizado ou fraude — e o log é a única saída, já
+    // que a resposta não pode dizer nada a quem não provou ser o gateway.
+    const headers = signedHeaders('tx-2', 'segredo-errado');
+    const warn = vi.spyOn(Logger.prototype, 'warn');
+    let avisos: string[];
+    try {
+      const response = await webhook('tx-2', headers);
+      expect(response.status).toBe(401);
+      // Copiado ANTES de restaurar: no Vitest, `mockRestore` também zera
+      // `mock.calls`, e a asserção leria um espião vazio.
+      avisos = warn.mock.calls.map(([mensagem]) => String(mensagem));
+    } finally {
+      warn.mockRestore();
+    }
+
+    const linha = avisos.find((mensagem) =>
+      mensagem.startsWith('payment.invalid_webhook_signature'),
+    );
+    expect(linha, 'nenhum warn de assinatura inválida foi emitido').toBeDefined();
+    expect(linha).toContain('transaction=tx-2');
+    expect(linha).toContain('request-id=req-e2e');
+    expect(linha).toContain(`ts=${/ts=(\d+)/.exec(headers['x-signature'])?.[1]}`);
+    // O segredo e a assinatura NUNCA podem vazar para o log.
+    expect(linha).not.toContain('segredo-errado');
+    expect(linha).not.toContain('v1=');
 
     const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
     expect(order.status).toBe('pending_payment');
@@ -308,6 +339,20 @@ describe('checkout (e2e)', () => {
       { method: 'POST' },
     );
     expect(response.status).toBe(404);
+  });
+
+  // Decisão #37: o prazo do QR é NOSSO, e a âncora é o createdAt do PEDIDO.
+  // Se alguém trocar por `new Date()` aqui, o QR volta a nascer com prazo cheio
+  // a partir de um pedido já velho e o pagamento fora do prazo vira rotina de
+  // novo — sem nada quebrar. Este teste é a única coisa que avisa.
+  it('o checkout manda ao gateway o createdAt do pedido como âncora da expiração', async () => {
+    const { orderId } = await createPendingOrder();
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+
+    const response = await fetch(`${baseUrl}/payments/checkout/${orderId}`, { method: 'POST' });
+    expect(response.status).toBe(201);
+
+    expect(fakeGateway.lastCheckoutInput?.orderCreatedAt.getTime()).toBe(order.createdAt.getTime());
   });
 });
 

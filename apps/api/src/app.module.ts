@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from './config/config.module';
+import { HealthModule } from './health/health.module';
 import { MenuModule } from './menu/menu.module';
 import { OrdersModule } from './orders/orders.module';
 import { PanelModule } from './panel/panel.module';
@@ -25,6 +26,7 @@ import { LoggingThrottlerGuard } from './common/logging-throttler.guard';
     ScheduleModule.forRoot(),
     AuthModule,
     AuditModule,
+    HealthModule,
     StoreModule,
     MenuModule,
     OrdersModule,

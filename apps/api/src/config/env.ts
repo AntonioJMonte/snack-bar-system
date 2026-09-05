@@ -10,10 +10,16 @@ const envSchema = z.object({
   JWT_TTL: z.string().default('12h'),
   MP_ACCESS_TOKEN: z.string().min(1),
   MP_WEBHOOK_SECRET: z.string().min(1),
+  API_PUBLIC_URL: z.url(),
   // Origem do apps/web: usada no CORS e nas back_urls do gateway (retorno do
   // navegador é só navegação — NUNCA prova de pagamento, seção 5.3).
-  // A API ocupa a 3001; o site roda na 3000.
-  WEB_ORIGIN: z.url().default('http://localhost:3000'),
+  //
+  // OBRIGATÓRIA, sem padrão. O `http://localhost:3000` que ficava aqui deixava
+  // a API subir feliz em produção com a origem errada: o CORS passava a barrar
+  // o site de verdade e as back_urls mandavam o cliente de volta para a máquina
+  // dele. Todas as outras variáveis críticas já falham rápido; esta não podia
+  // ser a exceção. Em desenvolvimento o valor vem do .env.example.
+  WEB_ORIGIN: z.url(),
   // Saltos de proxy confiáveis (decisão #35). 0 = não confia em ninguém, que é
   // o certo em desenvolvimento. Atrás de Railway/Render/Cloudflare, sem isto o
   // `req.ip` vira o IP do PROXY e todos os clientes caem no mesmo balde: o rate

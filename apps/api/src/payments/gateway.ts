@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { MercadoPagoConfig, Payment as MpPayment, Preference } from 'mercadopago';
+import { CHECKOUT_QR_MINUTES } from '../common/order-expiry';
 import { ENV, type Env } from '../config/env';
 
 // Visão NOSSA de um pagamento no gateway — o resto do sistema nunca vê tipos do
@@ -25,6 +26,11 @@ export interface CheckoutPreferenceInput {
   orderId: string;
   orderNumber: number;
   totalCents: number;
+  // Âncora da expiração do QR (decisão #37). É o `createdAt` do PEDIDO, não o
+  // instante da chamada: a preferência é reaproveitada (decisão #33), e ancorar
+  // em "agora" faria o QR nascer com prazo cheio a partir de um pedido que já
+  // está velho — a inversão que a #37 existe para eliminar.
+  orderCreatedAt: Date;
 }
 
 // Encapsula o SDK oficial. Substituído por um fake nos testes (sem credenciais
@@ -33,6 +39,7 @@ export interface CheckoutPreferenceInput {
 export class MercadoPagoClient {
   private readonly config: MercadoPagoConfig;
   private readonly webOrigin: string;
+  private readonly apiPublicUrl: string;
 
   constructor(@Inject(ENV) env: Env) {
     this.config = new MercadoPagoConfig({
@@ -40,6 +47,7 @@ export class MercadoPagoClient {
       options: { timeout: GATEWAY_TIMEOUT_MS },
     });
     this.webOrigin = env.WEB_ORIGIN;
+    this.apiPublicUrl = env.API_PUBLIC_URL;
   }
 
   async getPayment(id: string): Promise<GatewayPayment> {
@@ -72,7 +80,16 @@ export class MercadoPagoClient {
   async createCheckout(input: CheckoutPreferenceInput): Promise<{ initPoint: string }> {
     const preference = await new Preference(this.config).create({
       body: {
+        notification_url: `${this.apiPublicUrl}/payments/webhook/mercadopago`,
         external_reference: input.orderId,
+        // Prazo do QR Pix DITADO POR NÓS (decisão #37). Sem este campo vale o
+        // padrão do gateway (24h), e um QR válido por um dia inteiro contra um
+        // pedido que expira em 50 min transforma pagamento fora do prazo em
+        // rotina. Mesma constante que governa a expiração do pedido, então os
+        // dois lados não podem discordar.
+        date_of_expiration: new Date(
+          input.orderCreatedAt.getTime() + CHECKOUT_QR_MINUTES * 60 * 1000,
+        ).toISOString(),
         items: [
           {
             id: input.orderId,

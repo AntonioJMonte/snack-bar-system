@@ -3,8 +3,23 @@ import type { z } from 'zod';
 
 // Único ponto de contato do site com o backend. O site é um módulo de CANAL:
 // não conhece painel nem impressão, só a API (seção 13).
-// A API roda em 3001 (apps/api/.env); o site, em 3000.
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+//
+// SEM valor padrão, de propósito. O `?? 'http://localhost:3001'` que existia
+// aqui era falha silenciosa da pior espécie: o prefixo NEXT_PUBLIC_ faz o Next
+// GRAVAR este valor dentro dos chunks do navegador durante o build, então
+// esquecer a variável no provedor produzia um deploy verde que mandava o
+// CELULAR DO CLIENTE falar com o próprio localhost. Nada quebrava; a loja
+// simplesmente não vendia. Melhor não compilar.
+const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+if (!apiUrl) {
+  throw new Error(
+    'NEXT_PUBLIC_API_URL não está definida. Ela é lida no BUILD (o prefixo ' +
+      'NEXT_PUBLIC_ grava o valor nos chunks do navegador), não em runtime: ' +
+      'defina-a antes de `next build`, tanto em desenvolvimento (apps/web/.env.local) ' +
+      'quanto no provedor de hospedagem. Ex.: NEXT_PUBLIC_API_URL=http://localhost:3001',
+  );
+}
+export const API_URL = apiUrl;
 
 export class ApiError extends Error {
   constructor(

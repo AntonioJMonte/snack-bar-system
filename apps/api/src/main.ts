@@ -36,7 +36,7 @@ async function bootstrap() {
   // Só o apps/web fala com a API pelo navegador; webhooks do gateway são
   // server-to-server e não passam por CORS.
   app.enableCors({ origin: env.WEB_ORIGIN });
-  await app.listen(env.PORT);
+  await app.listen(env.PORT, '0.0.0.0');
 }
 
 void bootstrap();
